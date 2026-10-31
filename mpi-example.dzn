@@ -1,61 +1,61 @@
+
 % =====================================================================
 % PARAMETRY INFRASTRUKTURY CHMURY
 % =====================================================================
-C_ = 5;  % Aktywujemy wszystkie 5 klastrów
 
-L = {KRK, WAW, POZ, WROC, GDN};
+N_ = 5;  % Liczba dostepnych wezlow
 
-% Przypisanie klastrów do konkretnych lokalizacji z enum L
-CL = [KRK, WAW, POZ, WROC, GDN];
+% Zasoby wezlow: [CPU, RAM]
+%NRes = [| 32, 128   % Krakow
+%        | 64, 256   % Warszawa
+%        | 16,  64   % Poznan
+%        | 12,  32   % Wroclaw
+%        | 24,  96   % Gdansk
+%        |];
 
-% Zasoby klastrów: [CPU, RAM]
-% Różnicujemy wielkość klastrów (Warszawa największa, Gdańsk i Wrocław mniejsze)
-CRes = [| 32, 128   % Klaster 1: Kraków (KRK)
-        | 64, 256   % Klaster 2: Warszawa (WAW)
-        | 16,  64   % Klaster 3: Poznań (POZ)
-        | 12,  32   % Klaster 4: Wrocław (WROC) - Celowo mały, braki zasobów
-        | 24,  96 |]; % Klaster 5: Gdańsk (GDN)
+NRes = [| 14, 48   % Krakow
+        | 14, 48   % Warszawa
+        | 14,  48   % Poznan
+        | 14,  48   % Wroclaw
+        | 14,  48   % Gdansk
+        |];
 
-% Macierz  odległości (w kilometrach)
-% Kolejność: KRK (1), WAW (2), POZ (3), WROC (4), GDN (5)
-D = [|   0, 293, 400, 270, 540   % Kraków (KRK)
-     | 293,   0, 310, 348, 340   % Warszawa (WAW)
-     | 400, 310,   0, 180, 300   % Poznań (POZ)
-     | 270, 348, 180,   0, 480   % Wrocław (WROC)
-     | 540, 340, 300, 480,   0 |]; % Gdańsk (GDN)
+% Moc pobierana w trybie IDLE [W]
+IdlePower = [
+    100,  % Krakow
+    150,  % Warszawa
+    70,   % Poznan
+    60,   % Wroclaw
+    90    % Gdansk
+];
+
+% Moc pobierana przy maksymalnym obciazeniu [W]
+MaxPower = [
+    350,  % Krakow
+    600,  % Warszawa
+    200,  % Poznan
+    160,  % Wroclaw
+    280   % Gdansk
+];
 
 % =====================================================================
-% PARAMETRY USŁUG
+% PARAMETRY USLUG
 % =====================================================================
-S = {WEB, DB, VIDEO};
 
-% Wymagane zasoby przez pojedynczą instancję danej usługi: [CPU, RAM]
+S = {WEB, DB};
+
+% Wymagane zasoby przez pojedynczy pod: [CPU, RAM]
 Req = [| 1,  2    % WEB
        | 2,  8    % DB
-       | 4, 16 |];  % VIDEO
-
-% Wydajność obsługowa jednej instancji (ile jednostek ruchu obsłuży 1 instancja)
-ServiceRate = [10, 10, 10]; 
-
-% Maksymalna tolerowana odległość (opóźnienie?) transmisji (w km) dla usług: [WEB, DB, VIDEO]
-MaxDelay = [200, 200, 200];  
+%       | 4, 16    % VIDEO
+       |];
 
 % =====================================================================
-% RUCH I ZAPOTRZEBOWANIE (DEMAND)
+% MINIMALNA LICZBA REPLIK
 % =====================================================================
 
-% Ruch napływający lokalnie do każdego klastra dla usług: [WEB, DB, VIDEO]
-Demand = [| 30, 10, 4   % Kraków (Spory ruch, duże zasoby)
-          | 50, 20, 8   % Warszawa (Największy ruch)
-          | 15,  5, 2   % Poznań (Umiarkowany ruch)
-          | 40, 15, 6   % Wrocław (Duży ruch, ale ma za MAŁO zasobów u siebie!)
-          | 20,  5, 2 |]; % Gdańsk (Stabilny ruch)
-
-% =====================================================================
-% KOSZTY JEDNOSTKOWE I WAGI
-% =====================================================================
-UnitTransCost = 0.02;        % Koszt za przesłanie 1 jednostki ruchu na 1 km
-UnitCompCost = [1.5, 0.4];   % Koszt jednostkowy zasobów: [CPU, RAM]
-
-WeightComp = 1.0; 
-WeightTrans = 1.0;
+MinReplicas = [
+    16,  % WEB
+    10,  % DB
+%    7   % VIDEO
+];
