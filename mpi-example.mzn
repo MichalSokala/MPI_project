@@ -1,77 +1,109 @@
-% =====================================================================
-% DANE DOT. INFRASTRUKTURY CMUROWEJ
-% =====================================================================
-int: N_;                      % liczba węzłów obliczeniowych
-set of int: N = 1..N_;        % zbiór węzłów obliczeniowych
+int: N_;
+set of int: N = 1..N_;
+enum T = {CPU, RAM};
+array[N, T] of int: NRes;         % zasoby fizyczne wezlow: [vCPU, GiB]
+array[N, T] of int: SystemReserve; % rezerwa na kubelet, CNI, DaemonSet itp.
+array[N] of int: MustStayOn;      % 1: wezel musi pozostac wlaczony
+array[N] of int: IdlePower;       % moc calego wlaczonego wezla bez podow [W]
+array[N] of int: MaxPower;        % szacowana moc dla pelnego obciazenia CPU [W]
 
-enum T = {CPU, RAM};          % rodzaje zasobów obliczeniowych
-array [N,T] of int: NRes;     % zasoby węzłów
+enum S;
+array[S, T] of int: Req;         % requests jednego poda: [vCPU, GiB]
+array[S] of int: MinReplicas;
 
-array[N] of int: IdlePower;   % moc pobierana w trybie IDLE
-array[N] of int: MaxPower;   % moc pobierana przy maksymalnym obciążeniu
+% Zapotrzebowanie na dodatkowe repliki podczas uruchamiania wylaczonej VM.
+% ReserveScale = 0: brak dodatkowego zapasu, 1: prognoza bazowa itd.
+int: VMStartMinutes;
+array[S] of int: ExtraReplicasPerMinute;
+int: ReserveScale;
+array[S] of int: ShortagePenalty; % kara za brak 1 rezerwy [W-ekwiwalent]
+int: ShortagePenaltyMultiplier;   % 100 = bazowa kara, 0 = bez kary
+int: SpreadPenalty;              % kara za kazda kolejna replike na wezle [W-ekw.]
 
-% =====================================================================
-% DANE DOT. OFEROWANYCH USŁUG
-% =====================================================================
-enum S;                         % Oferowane usługi np. S = {WEB, DB, VIDEO};
-
-array[S, T] of int: Req;        % Wymagane zasoby obliczeniowe przez pojedynczy pod
-
-array[S] of int: MinReplicas;   % Minimalna liczba replik kazdej uslugi
+array[S] of int: BurstNeed = [
+    ReserveScale * VMStartMinutes * ExtraReplicasPerMinute[s] | s in S
+];
+int: MaxReplicas = max([MinReplicas[s] | s in S]);
+int: MaxBurst = max([BurstNeed[s] | s in S]);
 
 % =====================================================================
 % ZMIENNE DECYZYJNE
 % =====================================================================
-int: MaxReplicas = max([MinReplicas[s] | s in S]);
+array[S, N] of var 0..MaxReplicas: x;          % aktualnie uruchomione pody
+array[N] of var 0..1: is_active;              % stan VM / wezla
+array[S, N] of var 0..MaxBurst: standby;      % WIRTUALNE dodatkowe repliki
+array[S] of var 0..MaxBurst: shortage;        % liczba replik bez gotowego miejsca
+array[S, N] of var 0..MaxReplicas: colocated; % nadmiar replik tej samej uslugi
 
-array[S, N] of var 0..MaxReplicas: x;     % Liczba podow uslugi S na wezle N
-array[N] of var 0..1: is_active;     % Status wezla; 1 = wlaczony, 0 = wylaczony
-
-array[N] of var int: used_cpu = [sum(s in S)(x[s, n] * Req[s, CPU]) | n in N];
+array[N] of var int: used_cpu = [
+    sum(s in S)(x[s,n] * Req[s,CPU]) | n in N
+];
+array[N] of var int: used_ram = [
+    sum(s in S)(x[s,n] * Req[s,RAM]) | n in N
+];
 
 % =====================================================================
-% WARUNKI BRZEGOWE (CONSTRAINTS)
+% OGRANICZENIA
 % =====================================================================
 
-% 1. DOSTĘPNOŚĆ ZASOBÓW W KLASTRACH
-% Zużycie zasobów (CPU/RAM) przez instancje uruchomione w danym klastrze nie może przekroczyć jego pojemności.
-constraint forall(n in N, t in T) (
-    sum(s in S) (x[s, n] * Req[s, t]) <= NRes[n, t] * is_active[n]
+% 1. Dokladnie wymagane repliki (w tym projekcie ruch bazowy jest staly).
+constraint forall(s in S)(
+    sum(n in N)(x[s,n]) = MinReplicas[s]
 );
 
-% 2. OGRANICZONA ILOSC PODOW DANEJ USLUGI
-constraint forall(s in S) (
-    sum(n in N) (x[s, n]) >= MinReplicas[s]
+% 2. Granica liczby podow danej uslugi na pojedynczym wezle.
+% MaxReplicas jest tylko zakresem technicznym; wlasciwy limit to MinReplicas[s].
+constraint forall(s in S, n in N)(x[s,n] <= MinReplicas[s]);
+
+% 3. Rezerwa systemowa + aktualne pody + potencjalny burst nie moga
+% przekraczac pojemnosci wlaczonego wezla. Gdy is_active=0, nie ma podow.
+constraint forall(n in N, t in T)(
+    sum(s in S)((x[s,n] + standby[s,n]) * Req[s,t])
+        + SystemReserve[n,t] * is_active[n]
+        <= NRes[n,t] * is_active[n]
 );
 
-% 3. WYLACZENIE PUSTYCH WEZLOW
-constraint forall(n in N) (
-    sum(s in S)(x[s, n]) >= is_active[n]
+% 4. Dla kazdej uslugi zapewnij mozliwie wiele miejsc na nowe repliki.
+% shortage to miekkie naruszenie prognozowanego zapasu (nie obecnych SLA).
+constraint forall(s in S)(
+    sum(n in N)(standby[s,n]) + shortage[s] = BurstNeed[s]
 );
 
+% 5. Mozliwy wezel wymagany do utrzymania (np. stale potrzebny worker).
+% Control plane zakladamy poza optymalizowanymi workerami.
+constraint forall(n in N)(is_active[n] >= MustStayOn[n]);
+
+% 6. Miekkie rozpraszanie replik. Druga i kolejne repliki na wezle
+% zwiekszaja kare, ale pozostaja dozwolone.
+constraint forall(s in S, n in N)(
+    colocated[s,n] >= x[s,n] - 1
+);
+
+% Celowo NIE ma: sum(s)(x[s,n]) >= is_active[n].
+% Dopuszczamy wlaczony, pusty wezel utrzymujacy gotowa pojemnosc.
+% Sama dodatnia moc IdlePower sprawia, ze bez korzysci nie oplaca sie go wlaczyc.
+
 % =====================================================================
-% FUNKCJA KOSZTU (CELU)
+% FUNKCJA CELU
 % =====================================================================
 
-
-% Koszt obliczeniowy: suma kosztów zasobów (CPU, RAM) zużytych przez instancje we wszystkich klastrach
+% Moc calego wezla [W]. Zalozenie: requests CPU przyblizaja rzeczywisty load.
+% RAM jest ograniczeniem, a nie dodatkowym skladnikiem dynamicznej mocy.
+% IdlePower obejmuje bazowe zuzycie systemu i pamieci (bez podwojnego liczenia).
 var float: total_power = sum(n in N)(
-    int2float(IdlePower[n]*is_active[n]) + int2float(MaxPower[n] - IdlePower[n]) * int2float(used_cpu[n])/int2float(NRes[n, CPU])
+    int2float(IdlePower[n] * is_active[n])
+    + int2float(MaxPower[n] - IdlePower[n])
+      * int2float(used_cpu[n]) / int2float(NRes[n,CPU])
 );
 
-solve minimize total_power;
+% Kary sa wyrazone w W-ekwiwalentach; NIE sa fizycznym poborem mocy.
+var float: shortage_penalty =
+    int2float(ShortagePenaltyMultiplier) / 100.0 *
+    sum(s in S)(int2float(ShortagePenalty[s] * shortage[s]));
 
-% =====================================================================
-% RAPORT WYNIKOW
-% =====================================================================
-%output [
-%    "--- ALOKACJA INSTANCJI (x) ---\n"] ++
-%    [ "Wez \(c) (\(CL[n])): " ++ concat([ "\(s):\(x[s,c]) " | s in S]) ++ "\n" | n in N ] ++
-%    ["\n--- ROZPRZYW RUCHU (y) ---\n"] ++
-%    [ "Klaster \(c1) -> Klaster \(c2) | Usługa \(s) | Ruch: \(y[n1,s,c2]) (Opóźnienie: \(D[CL[n1], CL[n2]]))\n"
-%      | c1, c2 in C, s in S where fix(y[n1,s,c2]) > 0 ] ++
-%    ["\n--- KOSZTY ---\n",
-%     "Koszt obliczeń: ", show(comp_cost), "\n",
-%     "Koszt transmisji: ", show(trans_cost), "\n",
-%     "Koszt całkowity (ważony): ", show(total_cost), "\n"
-%];
+var float: spread_penalty =
+    int2float(SpreadPenalty) * sum(s in S, n in N)(int2float(colocated[s,n]));
+
+var float: total_objective = total_power + shortage_penalty + spread_penalty;
+
+solve minimize total_objective;

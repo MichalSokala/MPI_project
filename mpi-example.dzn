@@ -1,61 +1,39 @@
+N_ = 5;
 
-% =====================================================================
-% PARAMETRY INFRASTRUKTURY CHMURY
-% =====================================================================
-
-N_ = 5;  % Liczba dostepnych wezlow
-
-% Zasoby wezlow: [CPU, RAM]
-%NRes = [| 32, 128   % Krakow
-%        | 64, 256   % Warszawa
-%        | 16,  64   % Poznan
-%        | 12,  32   % Wroclaw
-%        | 24,  96   % Gdansk
-%        |];
-
-NRes = [| 14, 48   % Krakow
-        | 14, 48   % Warszawa
-        | 14,  48   % Poznan
-        | 14,  48   % Wroclaw
-        | 14,  48   % Gdansk
+% NRes: [CPU, RAM]
+NRes = [| 24,  96   % Wezel 1: sredni, umiarkowany idle
+        | 48, 176   % Wezel 2: duzy, wysoki idle, niska moc/W na CPU
+        | 16,  64   % Wezel 3: maly
+        | 12,  48   % Wezel 4: najmniejszy, niski idle
+        | 28, 112   % Wezel 5: sredni/duzy
         |];
 
-% Moc pobierana w trybie IDLE [W]
-IdlePower = [
-    100,  % Krakow
-    150,  % Warszawa
-    70,   % Poznan
-    60,   % Wroclaw
-    90    % Gdansk
-];
+% Zasoby zajete przez kubelet, CNI, DaemonSet i system na AKTYWNYM wezle.
+SystemReserve = [| 1, 4
+                 | 1, 4
+                 | 1, 4
+                 | 1, 4
+                 | 1, 4
+                 |];
 
-% Moc pobierana przy maksymalnym obciazeniu [W]
-MaxPower = [
-    350,  % Krakow
-    600,  % Warszawa
-    200,  % Poznan
-    160,  % Wroclaw
-    280   % Gdansk
-];
+% Control plane jest poza optymalizowanym zbiorem workerow.
+MustStayOn = [0, 0, 0, 0, 0];
 
-% =====================================================================
-% PARAMETRY USLUG
-% =====================================================================
+IdlePower = [105, 165, 75, 62, 120];
+MaxPower  = [275, 385, 205, 170, 300];
 
 S = {WEB, DB};
-
-% Wymagane zasoby przez pojedynczy pod: [CPU, RAM]
-Req = [| 1,  2    % WEB
-       | 2,  8    % DB
-%       | 4, 16    % VIDEO
+Req = [| 1, 2   % WEB
+       | 2, 8   % DB
        |];
+MinReplicas = [16, 10];
 
-% =====================================================================
-% MINIMALNA LICZBA REPLIK
-% =====================================================================
+% Scenariusz szybkiego wzrostu ruchu przez czas rozruchu nowej VM.
+% WEB: +2 repliki/min; DB: +1 replika/min; start VM trwa 3 minuty.
+VMStartMinutes = 3;
+ExtraReplicasPerMinute = [2, 1];
 
-MinReplicas = [
-    16,  % WEB
-    10,  % DB
-%    7   % VIDEO
-];
+ReserveScale = 1;               % w notebooku testowane 0,1,2,3
+ShortagePenalty = [95, 130];   % jednostka modelowa: W-ekw. / replika
+ShortagePenaltyMultiplier = 100; % 100% bazowej kary
+SpreadPenalty = 4;             % W-ekw. / nadmiarowa replika
